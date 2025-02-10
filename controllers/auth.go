@@ -4,8 +4,9 @@ import (
 	"fitness-backend/models"
 	"fitness-backend/utils"
 	"net/http"
+	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v4"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -22,56 +23,60 @@ func NewAuthController(db *mongo.Database) *AuthController {
 	}
 }
 
-func (ac *AuthController) SignUp(c *gin.Context) {
-	var user models.User
-	if err := c.ShouldBindJSON(&user); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+func (ac *AuthController) SignUp(c echo.Context) error {
+	// Check content type before binding
+	contentType := c.Request().Header.Get("Content-Type")
+	if !strings.Contains(strings.ToLower(contentType), "application/json") {
+		return echo.NewHTTPError(http.StatusUnsupportedMediaType, "Content-Type must be application/json")
 	}
 
-	// Check if user with same email exists
+	var user models.User
+	if err := c.Bind(&user); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
 	var existingUser models.User
-	err := ac.collection.FindOne(c, bson.M{"email": user.Email}).Decode(&existingUser)
+	err := ac.collection.FindOne(c.Request().Context(), bson.M{"email": user.Email}).Decode(&existingUser)
 	if err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "User with this email already exists"})
-		return
+		return c.JSON(http.StatusConflict, map[string]string{"error": "User with this email already exists"})
 	} else if err != mongo.ErrNoDocuments {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error checking existing user"})
-		return
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error checking existing user"})
 	}
 
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
 	user.Password = string(hashedPassword)
 
-	result, err := ac.collection.InsertOne(c, user)
+	result, err := ac.collection.InsertOne(c.Request().Context(), user)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating user"})
-		return
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error creating user"})
 	}
 
 	token, _ := utils.GenerateToken(result.InsertedID.(primitive.ObjectID).Hex())
-	c.JSON(http.StatusCreated, gin.H{"token": token})
+	return c.JSON(http.StatusCreated, map[string]string{"token": token})
 }
 
-func (ac *AuthController) Login(c *gin.Context) {
+func (ac *AuthController) Login(c echo.Context) error {
+	// Check content type before binding
+	contentType := c.Request().Header.Get("Content-Type")
+	if !strings.Contains(strings.ToLower(contentType), "application/json") {
+		return echo.NewHTTPError(http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+	}
+
 	var loginUser models.User
-	if err := c.ShouldBindJSON(&loginUser); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if err := c.Bind(&loginUser); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
 	var user models.User
-	err := ac.collection.FindOne(c, bson.M{"email": loginUser.Email}).Decode(&user)
+	err := ac.collection.FindOne(c.Request().Context(), bson.M{"email": loginUser.Email}).Decode(&user)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
-		return
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid credentials"})
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginUser.Password)); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
-		return
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid credentials"})
 	}
 
 	token, _ := utils.GenerateToken(user.ID.Hex())
-	c.JSON(http.StatusOK, gin.H{"token": token})
+	return c.JSON(http.StatusOK, map[string]string{"token": token})
 }

@@ -6,35 +6,28 @@ import (
 	"strings"
 
 	"github.com/golang-jwt/jwt"
-
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v4"
 )
 
-func AuthMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
+func AuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		authHeader := c.Request().Header.Get("Authorization")
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
-			c.Abort()
-			return
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Authorization header required"})
 		}
 
 		bearerToken := strings.Split(authHeader, " ")
 		if len(bearerToken) != 2 {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token format"})
-			c.Abort()
-			return
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid token format"})
 		}
 
 		token, err := utils.VerifyToken(bearerToken[1])
 		if err != nil || !token.Valid {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-			c.Abort()
-			return
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid token"})
 		}
 
 		claims := token.Claims.(jwt.MapClaims)
 		c.Set("user_id", claims["user_id"])
-		c.Next()
+		return next(c)
 	}
 }
