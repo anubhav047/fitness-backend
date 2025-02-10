@@ -29,6 +29,17 @@ func (ac *AuthController) SignUp(c *gin.Context) {
 		return
 	}
 
+	// Check if user with same email exists
+	var existingUser models.User
+	err := ac.collection.FindOne(c, bson.M{"email": user.Email}).Decode(&existingUser)
+	if err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "User with this email already exists"})
+		return
+	} else if err != mongo.ErrNoDocuments {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error checking existing user"})
+		return
+	}
+
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
 	user.Password = string(hashedPassword)
 
