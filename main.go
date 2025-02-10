@@ -51,7 +51,7 @@ func main() {
 		port = ":" + port
 	}
 
-	// Start server with error handling
+	// Start server with error handling.
 	if err := r.Run(port); err != nil {
 		log.Fatal("Failed to start server: ", err)
 	}
