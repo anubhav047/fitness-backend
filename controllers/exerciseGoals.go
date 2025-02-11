@@ -24,6 +24,22 @@ func NewGoalController(db *mongo.Database) *GoalController {
 		Collection: db.Collection("daily_data"),
 	}
 }
+func convertToFloat(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case int:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case float32:
+		return float64(v), true
+	case float64:
+		return v, true
+	default:
+		return 0, false
+	}
+}
 
 // GetAllGoals retrieves all goals for a specific date
 func (gc *GoalController) GetAllGoals(c echo.Context) error {
@@ -198,16 +214,6 @@ func (gc *GoalController) CreateGoal(c echo.Context) error {
 		goal.CreatedAt = time.Now()
 		goal.UpdatedAt = time.Now()
 		request.Goal = goal
-	case "calories":
-		var goal models.ExerciseGoal
-		if err := mapstructure.Decode(request.Goal, &goal); err != nil {
-			return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid goal data"))
-		}
-		goal.ID = goalID
-		goal.UserID = userID
-		goal.CreatedAt = time.Now()
-		goal.UpdatedAt = time.Now()
-		request.Goal = goal
 	default:
 		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid goal type"))
 	}
@@ -271,66 +277,116 @@ func (gc *GoalController) UpdateGoal(c echo.Context) error {
 
 // DeleteGoal removes a goal by ID, sets goalValue to 0, and deletes the document if both goalValue and progressValue are 0.
 func (gc *GoalController) DeleteGoal(c echo.Context) error {
+	// Step 1: Extract user ID from context
 	userIDString, ok := c.Get("user_id").(string)
 	if !ok {
 		fmt.Println("user_id is null")
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+		return c.JSON(http.StatusUnauthorized, utils.ErrorResponse("Unauthorized"))
 	}
 
 	userID, err := primitive.ObjectIDFromHex(userIDString)
 	if err != nil {
 		fmt.Println("Invalid user ID format")
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal Server Error"})
+		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Internal Server Error"))
 	}
 
+	// Step 2: Extract Goal ID and Date
 	goalID, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid goal ID format"))
 	}
+
 	date, err := time.Parse("2006-01-02", c.Param("date"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid date format"))
 	}
 
-	// Find the goal to check its current values
-	filter := bson.M{"userId": userID, "date": date}
-	var dailyData models.DailyDataCollection
-	err = gc.Collection.FindOne(c.Request().Context(), filter).Decode(&dailyData)
+	// Step 3: Update goalValue to 0
+	filter := bson.M{"userId": userID, "date": date, "goals._id": goalID}
+	update := bson.M{"$set": bson.M{"goals.$.goalValue": 0}}
+
+	updateResult, err := gc.Collection.UpdateOne(c.Request().Context(), filter, update)
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return c.JSON(http.StatusNotFound, utils.ErrorResponse("Goal not found"))
-		}
-		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Error retrieving goal"))
+		fmt.Println("Failed to update goal value")
+		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Failed to update goal value"))
 	}
 
-	// Locate the specific goal within the dailyData.Goals slice
-	var goalToDelete interface{}
-	for _, g := range dailyData.Goals {
-		switch goal := g.(type) { // Type assertion for each goal
-		case primitive.D:
-			goalMap := goal.Map()
-			goalIDBson, ok := goalMap["_id"].(primitive.ObjectID)
-			if ok && goalIDBson == goalID {
-				goalToDelete = goalMap
-				break
-			}
-		default:
-			continue // Skip unknown goal types
-		}
-	}
-
-	if goalToDelete == nil {
+	if updateResult.MatchedCount == 0 {
+		fmt.Println("Goal not found")
 		return c.JSON(http.StatusNotFound, utils.ErrorResponse("Goal not found"))
 	}
 
-	// Update the document by removing the goal
-	update := bson.M{
-		"$pull": bson.M{"goals": bson.M{"_id": goalID}},
-	}
-	_, err = gc.Collection.UpdateOne(c.Request().Context(), filter, update)
+	// Step 4: Retrieve the updated document
+	var dailyData models.DailyDataCollection
+	err = gc.Collection.FindOne(c.Request().Context(), bson.M{"userId": userID, "date": date}).Decode(&dailyData)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Failed to delete goal"))
+		fmt.Println("Failed to retrieve goal")
+		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Failed to retrieve goal"))
 	}
 
-	return c.JSON(http.StatusOK, utils.SuccessResponse("Goal deleted successfully"))
+	// Step 5: Locate the specific goal and check values
+	for _, goal := range dailyData.Goals {
+		var goalMap bson.M
+
+		// Convert goal to bson.M properly
+		switch g := goal.(type) {
+		case primitive.D:
+			bsonBytes, err := bson.Marshal(g)
+			if err != nil {
+				fmt.Println("Failed to marshal goal:", err)
+				continue
+			}
+			err = bson.Unmarshal(bsonBytes, &goalMap)
+			if err != nil {
+				fmt.Println("Failed to unmarshal goal:", err)
+				continue
+			}
+		case bson.M:
+			goalMap = g
+		default:
+			fmt.Println("Skipping unknown goal type:", g)
+			continue
+		}
+
+		// Debug output to verify goal extraction
+		fmt.Printf("Converted Goal: %+v\n", goalMap)
+
+		goalIDBson, ok := goalMap["_id"].(primitive.ObjectID)
+		if ok && goalIDBson == goalID {
+			goalValue, goalValueOk := convertToFloat(goalMap["goalValue"])
+			progressValue, progressValueOk := convertToFloat(goalMap["progressValue"])
+
+			fmt.Printf("Checking Goal Values -> goalValue: %v, progressValue: %v\n", goalValue, progressValue)
+
+			// Step 6: Delete goal if both values are 0
+			if goalValueOk && progressValueOk && goalValue == 0 && progressValue == 0 {
+				deleteUpdate := bson.M{
+					"$pull": bson.M{"goals": bson.M{"_id": goalIDBson}},
+				}
+
+				fmt.Printf("🛠️ Running Delete Query: %+v\n", deleteUpdate)
+
+				deleteResult, err := gc.Collection.UpdateOne(c.Request().Context(), filter, deleteUpdate)
+				if err != nil {
+					fmt.Println("Failed to delete goal")
+					return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Failed to delete goal"))
+				}
+
+				// Log MongoDB deletion result
+				fmt.Printf(" Delete Result: %+v\n", deleteResult)
+
+				if deleteResult.ModifiedCount > 0 {
+					fmt.Println(" Goal deleted successfully!")
+					return c.JSON(http.StatusOK, utils.SuccessResponse("Goal deleted successfully"))
+				} else {
+					fmt.Println(" Goal deletion failed")
+					return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Goal deletion failed"))
+				}
+			} else {
+				fmt.Println("Goal value set to 0, but not deleted (progressValue not 0)")
+			}
+		}
+	}
+
+	return c.JSON(http.StatusOK, utils.SuccessResponse("Goal value set to 0"))
 }
