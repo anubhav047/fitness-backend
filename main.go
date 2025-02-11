@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fitness-backend/controllers"
-	"fitness-backend/middleware"
+	"fitness-backend/routes"
 	"fitness-backend/utils"
 	"log"
 
@@ -26,17 +26,12 @@ func main() {
 
 	// Setup Echo
 	e := echo.New()
-
 	// Auth routes
 	auth := e.Group("/auth")
 	auth.POST("/signup", authController.SignUp)
 	auth.POST("/login", authController.Login)
 
-	// Protected routes
-	api := e.Group("/api")
-	api.Use(middleware.AuthMiddleware)
-	// Add protected routes here
-
+	routes.RegisterRoutes(e, db)
 	port := utils.GetEnvVariable("PORT")
 	if port == "" {
 		port = ":8080"
