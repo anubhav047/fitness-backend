@@ -6,8 +6,11 @@ import (
 	"fitness-backend/routes"
 	"fitness-backend/utils"
 	"log"
+	"os"
+	"strings"
 
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -26,12 +29,30 @@ func main() {
 
 	// Setup Echo
 	e := echo.New()
+
+	// Get frontend origins from environment variable
+	frontendOrigins := os.Getenv("FRONTEND_ORIGINS")
+	if frontendOrigins == "" {
+		log.Fatal("FRONTEND_ORIGINS environment variable is not set")
+	}
+	origins := strings.Split(frontendOrigins, ",")
+
+	// Apply CORS middleware
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: origins, // Use the frontend origins from the environment variable
+		AllowMethods: []string{echo.GET, echo.POST, echo.PUT, echo.DELETE, echo.PATCH},
+	}))
+
 	// Auth routes
 	auth := e.Group("/auth")
 	auth.POST("/signup", authController.SignUp)
 	auth.POST("/login", authController.Login)
 
-	routes.RegisterRoutes(e, db)
+	//Routes for exercises
+	routes.RegisterExerciseRoutes(e, db)
+	//Routes for calories
+	routes.RegisterCalorieRoutes(e, db)
+
 	port := utils.GetEnvVariable("PORT")
 	if port == "" {
 		port = ":8080"
