@@ -51,7 +51,7 @@ func main() {
 	//Routes for exercises
 	routes.RegisterExerciseRoutes(e, db)
 	//Routes for calories
-	routes.RegisterCalorieRoutes(e, db)
+	routes.RegisterFoodRoutes(e, db)
 
 	port := utils.GetEnvVariable("PORT")
 	if port == "" {

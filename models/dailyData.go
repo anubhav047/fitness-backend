@@ -33,9 +33,33 @@ type ExerciseGoal struct {
 	UpdatedAt     time.Time          `bson:"updatedAt" json:"updatedAt"`         // Last update timestamp
 }
 
-// FoodGoal represents a goal related to nutritional data.
-type FoodGoal struct {
-	ID     primitive.ObjectID `bson:"_id,omitempty" json:"id"` // Unique identifier
-	UserID primitive.ObjectID `bson:"userId" json:"userId"`    // Reference to the user
-	FoodID primitive.ObjectID `bson:"foodId" json:"foodId"`    // Reference to the food item
+// NutritionGoal represents a goal for nutrition intake.(WATER,CALORIES,CUSTOM GOALS)
+// all goals whose goalName is not water or calories are custom goals
+type NutritionGoal struct {
+	ID            primitive.ObjectID `bson:"_id,omitempty" json:"id"`            // Unique identifier
+	UserID        primitive.ObjectID `bson:"userId" json:"userId"`               // Reference to the user
+	GoalName      string             `bson:"goalName" json:"goalName"`           // Name of the goal (calories/water)
+	Type          string             `bson:"type" json:"type"`                   // "kcal" "L" or "g"
+	GoalValue     float64            `bson:"goalValue" json:"goalValue"`         // Target value
+	ProgressValue float64            `bson:"progressValue" json:"progressValue"` // Current intake value
+	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`         // Creation timestamp
+	UpdatedAt     time.Time          `bson:"updatedAt" json:"updatedAt"`         // Last update timestamp
+}
+
+// WeightEntry represents a single weight measurement
+type WeightEntry struct {
+	Value float64   `bson:"value" json:"value"` // Weight value
+	Date  time.Time `bson:"date" json:"date"`   // Date of measurement
+}
+
+// WeightGoal represents a goal for weight management
+type WeightGoal struct {
+	ID           primitive.ObjectID `bson:"_id,omitempty" json:"id"`          // Unique identifier
+	UserID       primitive.ObjectID `bson:"userId" json:"userId"`             // Reference to the user
+	GoalValue    float64            `bson:"goalValue" json:"goalValue"`       // Target weight
+	CurrentValue float64            `bson:"currentValue" json:"currentValue"` // Current weight
+	Unit         string             `bson:"unit" json:"unit"`                 // kg or lbs
+	Entries      []WeightEntry      `bson:"entries" json:"entries"`           // History of weight entries
+	CreatedAt    time.Time          `bson:"createdAt" json:"createdAt"`       // Creation timestamp
+	UpdatedAt    time.Time          `bson:"updatedAt" json:"updatedAt"`       // Last update timestamp
 }
