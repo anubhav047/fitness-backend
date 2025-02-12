@@ -13,6 +13,7 @@ func RegisterExerciseRoutes(e *echo.Echo, db *mongo.Database) {
 	// Controllers
 	exerciseGuideController := controllers.NewExerciseGuideController(db)
 	goalController := controllers.NewGoalController(db)
+	progressController := controllers.NewProgressController(db)
 
 	// Protected API routes
 	api := e.Group("/api")
@@ -33,10 +34,17 @@ func RegisterExerciseRoutes(e *echo.Echo, db *mongo.Database) {
 
 	// Goal Management Routes
 	goals := api.Group("/goals")
-	goals.POST("/:date", goalController.CreateGoal)           // POST before GET
+	goals.POST("/:date", goalController.CreateGoal)           // Create
 	goals.GET("/:date/:id", goalController.GetGoal)           // Specific GET
 	goals.PATCH("/:date/:id", goalController.UpdateGoal)      // Specific PATCH
-	goals.GET("/:date/active", goalController.GetActiveGoals) // More general GET
-	goals.GET("/:date", goalController.GetAllGoals)           // General GET
-	goals.DELETE("/:date/:id", goalController.DeleteGoal)
+	goals.GET("/:date/active", goalController.GetActiveGoals) // Get all active
+	goals.GET("/:date", goalController.GetAllGoals)           // Get all
+	goals.DELETE("/:date/:id", goalController.DeleteGoal)     // Delete
+
+	// Progress Management Routes
+	progress := api.Group("/progress")
+	// progress.POST("/:date", goalController.CreateGoal)         // Create goal with goalvalue 0
+	progress.GET("/:date", progressController.GetProgress)           // Get all progress for a user for a date
+	progress.PATCH("/:id", progressController.UpdateProgress)        // Update progress entry
+	progress.DELETE("/:date/:id", progressController.DeleteProgress) // Delete progress entry
 }
