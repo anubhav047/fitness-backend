@@ -155,13 +155,13 @@ func (gc *GoalController) GetGoal(c echo.Context) error {
 					}
 				}
 
-				// Try to decode into FoodGoal
-				var foodGoal models.FoodGoal
+				// Try to decode into NutritionGoal
+				var nutritionGoal models.NutritionGoal
 				bsonBytes, err = bson.Marshal(goalMap)
 				if err == nil {
-					err = bson.Unmarshal(bsonBytes, &foodGoal)
+					err = bson.Unmarshal(bsonBytes, &nutritionGoal)
 					if err == nil {
-						return c.JSON(http.StatusOK, foodGoal)
+						return c.JSON(http.StatusOK, nutritionGoal)
 					}
 				}
 			}
@@ -193,9 +193,8 @@ func (gc *GoalController) CreateGoal(c echo.Context) error {
 	}
 
 	var request struct {
-		Type       string             `json:"type"`
-		ExerciseID primitive.ObjectID `json:"exerciseId"`
-		Goal       interface{}        `json:"goal"`
+		Type string      `json:"type"`
+		Goal interface{} `json:"goal"`
 	}
 	if err := c.Bind(&request); err != nil {
 		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid request body"))
@@ -206,14 +205,40 @@ func (gc *GoalController) CreateGoal(c echo.Context) error {
 	case "exercise":
 		var goal models.ExerciseGoal
 		if err := mapstructure.Decode(request.Goal, &goal); err != nil {
-			return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid goal data"))
+			return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid exercise goal data"))
 		}
 		goal.ID = goalID
 		goal.UserID = userID
-		goal.ExerciseID = request.ExerciseID
 		goal.CreatedAt = time.Now()
 		goal.UpdatedAt = time.Now()
 		request.Goal = goal
+
+	case "water", "calorie", "customgoal":
+		var goal models.NutritionGoal
+		if err := mapstructure.Decode(request.Goal, &goal); err != nil {
+			return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid nutrition goal data"))
+		}
+		goal.ID = goalID
+		goal.UserID = userID
+		goal.CreatedAt = time.Now()
+		goal.UpdatedAt = time.Now()
+		request.Goal = goal
+
+	case "weight":
+		var goal models.WeightGoal
+		if err := mapstructure.Decode(request.Goal, &goal); err != nil {
+			return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid weight goal data"))
+		}
+		goal.ID = goalID
+		goal.UserID = userID
+		goal.CreatedAt = time.Now()
+		goal.UpdatedAt = time.Now()
+		// Initialize empty entries array if not provided
+		if goal.Entries == nil {
+			goal.Entries = []models.WeightEntry{}
+		}
+		request.Goal = goal
+
 	default:
 		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid goal type"))
 	}
