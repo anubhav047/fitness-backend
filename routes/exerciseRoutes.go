@@ -2,6 +2,7 @@ package routes
 
 import (
 	"fitness-backend/controllers"
+	"fitness-backend/middleware"
 
 	"github.com/labstack/echo/v4"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -11,11 +12,11 @@ import (
 func RegisterExerciseRoutes(e *echo.Echo, db *mongo.Database) {
 	// Controllers
 	exerciseGuideController := controllers.NewExerciseGuideController(db)
-	// goalController := controllers.NewGoalController(db)
+	goalController := controllers.NewGoalController(db)
 
 	// Protected API routes
 	api := e.Group("/api")
-	// api.Use(middleware.AuthMiddleware)
+	api.Use(middleware.AuthMiddleware)
 
 	// Exercise Guide Routes
 	exercise := api.Group("/exercises")
@@ -31,10 +32,11 @@ func RegisterExerciseRoutes(e *echo.Echo, db *mongo.Database) {
 	exercise.DELETE("/:id", exerciseGuideController.DeleteExerciseByID)
 
 	// Goal Management Routes
-	// goals := api.Group("/goals")
-	// goals.GET("/:date", goalController.GetAllGoals)
-	// goals.GET("/:date/active", goalController.GetActiveGoals)
-	// goals.GET("/:date/:id", goalController.GetGoal)
-	// goals.POST("/:date", goalController.CreateGoal)
-	// goals.PATCH("/:date/:id", goalController.UpdateGoal)
+	goals := api.Group("/goals")
+	goals.POST("/:date", goalController.CreateGoal)           // POST before GET
+	goals.GET("/:date/:id", goalController.GetGoal)           // Specific GET
+	goals.PATCH("/:date/:id", goalController.UpdateGoal)      // Specific PATCH
+	goals.GET("/:date/active", goalController.GetActiveGoals) // More general GET
+	goals.GET("/:date", goalController.GetAllGoals)           // General GET
+	goals.DELETE("/:date/:id", goalController.DeleteGoal)
 }
