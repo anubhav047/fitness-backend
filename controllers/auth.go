@@ -80,3 +80,28 @@ func (ac *AuthController) Login(c echo.Context) error {
 	token, _ := utils.GenerateToken(user.ID.Hex())
 	return c.JSON(http.StatusOK, map[string]string{"token": token})
 }
+
+func (ac *AuthController) GetUserDetails(c echo.Context) error {
+	userIDString, ok := c.Get("user_id").(string)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, utils.ErrorResponse("Unauthorized"))
+	}
+	objectID, err := primitive.ObjectIDFromHex(userIDString)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid user ID")
+	}
+
+	var user models.User
+	err = ac.collection.FindOne(c.Request().Context(), bson.M{"_id": objectID}).Decode(&user)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return echo.NewHTTPError(http.StatusNotFound, "User not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "Error fetching user details")
+	}
+
+	// Remove sensitive information
+	user.Password = ""
+
+	return c.JSON(http.StatusOK, user)
+}
