@@ -28,22 +28,6 @@ func NewGoalController(db *mongo.Database) *GoalController {
 		ExerciseCollection: db.Collection("exercise_guides"), // Add this line
 	}
 }
-func convertToFloat(value interface{}) (float64, bool) {
-	switch v := value.(type) {
-	case int:
-		return float64(v), true
-	case int32:
-		return float64(v), true
-	case int64:
-		return float64(v), true
-	case float32:
-		return float64(v), true
-	case float64:
-		return v, true
-	default:
-		return 0, false
-	}
-}
 
 // GetAllGoals retrieves all goals for a specific date
 func (gc *GoalController) GetAllGoals(c echo.Context) error {
@@ -348,20 +332,18 @@ func (gc *GoalController) UpdateGoal(c echo.Context) error {
 
 // DeleteGoal removes a goal by ID, sets goalValue to 0, and deletes the document if both goalValue and progressValue are 0.
 func (gc *GoalController) DeleteGoal(c echo.Context) error {
-	// Step 1: Extract user ID from context
+	// Get user ID
 	userIDString, ok := c.Get("user_id").(string)
 	if !ok {
-		fmt.Println("user_id is null")
 		return c.JSON(http.StatusUnauthorized, utils.ErrorResponse("Unauthorized"))
 	}
 
 	userID, err := primitive.ObjectIDFromHex(userIDString)
 	if err != nil {
-		fmt.Println("Invalid user ID format")
-		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Internal Server Error"))
+		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid user ID format"))
 	}
 
-	// Step 2: Extract Goal ID and Date
+	// Get goal ID and date
 	goalID, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid goal ID format"))
@@ -372,109 +354,112 @@ func (gc *GoalController) DeleteGoal(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid date format"))
 	}
 
-	// Debug: Print filter criteria
-	fmt.Printf("Filter Criteria: userId: %s, date: %s, goalId: %s\n", userID.Hex(), date.Format("2006-01-02"), goalID.Hex())
+	// Debug log
+	fmt.Printf("Searching for goal: UserID=%s, Date=%s, GoalID=%s\n",
+		userID.Hex(), date.Format("2006-01-02"), goalID.Hex())
 
-	// Step 3: Update goalValue to 0
-	filter := bson.M{"userId": userID, "date": date, "goals._id": goalID}
-	update := bson.M{"$set": bson.M{"goals.$.goalValue": 0}}
-
-	updateResult, err := gc.Collection.UpdateOne(c.Request().Context(), filter, update)
-	fmt.Printf("Update Result: %+v\n", updateResult)
-	if err != nil {
-		fmt.Println("Failed to update goal value")
-		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Failed to update goal value"))
+	// Create filter with both string and ObjectID possibilities
+	filter := bson.M{
+		"userId": userID,
+		"date":   date,
+		"goals._id": bson.M{
+			"$in": []interface{}{goalID, goalID.Hex()},
+		},
 	}
 
-	if updateResult.MatchedCount == 0 {
-		fmt.Println("Goal not found")
-		return c.JSON(http.StatusNotFound, utils.ErrorResponse("Goal not found"))
-	}
-
-	// Step 4: Retrieve the updated document
+	// First, verify goal exists
 	var dailyData models.DailyDataCollection
-	err = gc.Collection.FindOne(c.Request().Context(), bson.M{"userId": userID, "date": date}).Decode(&dailyData)
+	err = gc.Collection.FindOne(c.Request().Context(), filter).Decode(&dailyData)
 	if err != nil {
-		fmt.Println("Failed to retrieve goal")
-		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Failed to retrieve goal"))
+		if err == mongo.ErrNoDocuments {
+			return c.JSON(http.StatusNotFound, utils.ErrorResponse("Goal not found"))
+		}
+		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Database error"))
 	}
 
-	// Step 5: Locate the specific goal and check values
+	// Find the specific goal
+	var targetGoal interface{}
 	for _, goal := range dailyData.Goals {
 		var goalMap bson.M
-
-		// Convert goal to bson.M properly
 		switch g := goal.(type) {
 		case primitive.D:
-			bsonBytes, err := bson.Marshal(g)
-			if err != nil {
-				fmt.Println("Failed to marshal goal:", err)
-				continue
-			}
-			err = bson.Unmarshal(bsonBytes, &goalMap)
-			if err != nil {
-				fmt.Println("Failed to unmarshal goal:", err)
-				continue
-			}
+			goalMap = g.Map()
 		case bson.M:
 			goalMap = g
 		default:
-			fmt.Println("Skipping unknown goal type:", g)
 			continue
 		}
 
-		// Debug output to verify goal extraction
-		fmt.Printf("Converted Goal: %+v\n", goalMap)
-
-		goalIDBson, ok := goalMap["_id"].(primitive.ObjectID)
-		if !ok {
-			// Handle case where _id is a string
-			goalIDStr, ok := goalMap["_id"].(string)
-			if ok {
-				goalIDBson, err = primitive.ObjectIDFromHex(goalIDStr)
-				if err != nil {
-					fmt.Println("Invalid goal ID format in goal:", goalIDStr)
-					continue
+		// Check both ObjectID and string formats
+		if gID, ok := goalMap["_id"]; ok {
+			switch id := gID.(type) {
+			case primitive.ObjectID:
+				if id == goalID {
+					targetGoal = goalMap
+					break
 				}
-			} else {
-				fmt.Println("Unknown _id format in goal:", goalMap["_id"])
-				continue
+			case string:
+				if id == goalID.Hex() {
+					targetGoal = goalMap
+					break
+				}
 			}
 		}
+	}
 
-		if goalIDBson == goalID {
-			goalValue, goalValueOk := convertToFloat(goalMap["goalValue"])
-			progressValue, progressValueOk := convertToFloat(goalMap["progressValue"])
+	if targetGoal == nil {
+		return c.JSON(http.StatusNotFound, utils.ErrorResponse("Goal not found in document"))
+	}
 
-			fmt.Printf("Checking Goal Values -> goalValue: %v, progressValue: %v\n", goalValue, progressValue)
+	// Set goalValue to 0 in the database
+	update := bson.M{
+		"$set": bson.M{"goals.$.goalValue": 0},
+	}
 
-			// Step 6: Delete goal if both values are 0
-			if goalValueOk && progressValueOk && goalValue == 0 && progressValue == 0 {
-				deleteUpdate := bson.M{
-					"$pull": bson.M{"goals": bson.M{"_id": goalIDBson}},
-				}
+	updateResult, err := gc.Collection.UpdateOne(c.Request().Context(), filter, update)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Failed to update goal"))
+	}
 
-				fmt.Printf("🛠️ Running Delete Query: %+v\n", deleteUpdate)
+	if updateResult.MatchedCount == 0 {
+		return c.JSON(http.StatusNotFound, utils.ErrorResponse("Goal not found for update"))
+	}
 
-				deleteResult, err := gc.Collection.UpdateOne(c.Request().Context(), filter, deleteUpdate)
-				if err != nil {
-					fmt.Println("Failed to delete goal")
-					return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Failed to delete goal"))
-				}
+	// Update our in-memory targetGoal to reflect the change
+	goalMap := targetGoal.(bson.M)
+	goalMap["goalValue"] = 0
 
-				// Log MongoDB deletion result
-				fmt.Printf(" Delete Result: %+v\n", deleteResult)
+	// Retrieve values from the updated targetGoal
+	goalValue, _ := utils.ConvertToFloat(goalMap["goalValue"])
+	progressValue, _ := utils.ConvertToFloat(goalMap["progressValue"])
 
-				if deleteResult.ModifiedCount > 0 {
-					fmt.Println(" Goal deleted successfully!")
-					return c.JSON(http.StatusOK, utils.SuccessResponse("Goal deleted successfully"))
-				} else {
-					fmt.Println(" Goal deletion failed")
-					return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Goal deletion failed"))
-				}
-			} else {
-				fmt.Println("Goal value set to 0, but not deleted (progressValue not 0)")
-			}
+	// Check if both values are 0; if so, delete the goal
+	if goalValue == 0 && progressValue == 0 {
+		deleteFilter := bson.M{
+			"userId": userID,
+			"date":   date,
+		}
+		deleteUpdate := bson.M{
+			"$pull": bson.M{
+				"goals": bson.M{
+					"_id": bson.M{
+						"$in": []interface{}{goalID, goalID.Hex()},
+					},
+				},
+			},
+		}
+
+		deleteResult, err := gc.Collection.UpdateOne(
+			c.Request().Context(),
+			deleteFilter,
+			deleteUpdate,
+		)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Failed to delete goal"))
+		}
+
+		if deleteResult.ModifiedCount > 0 {
+			return c.JSON(http.StatusOK, utils.SuccessResponse("Goal deleted successfully"))
 		}
 	}
 
