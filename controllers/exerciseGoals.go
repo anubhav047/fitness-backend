@@ -33,13 +33,11 @@ func NewGoalController(db *mongo.Database) *GoalController {
 func (gc *GoalController) GetAllGoals(c echo.Context) error {
 	userIDString, ok := c.Get("user_id").(string)
 	if !ok {
-		fmt.Println("user_id is null")
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
 	}
 
 	userID, err := primitive.ObjectIDFromHex(userIDString)
 	if err != nil {
-		fmt.Println("Invalid user ID format")
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal Server Error"})
 	}
 
@@ -58,7 +56,52 @@ func (gc *GoalController) GetAllGoals(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Error retrieving goals"))
 	}
 
-	return c.JSON(http.StatusOK, dailyData.Goals)
+	// Convert goals to proper format
+	formattedGoals := make([]map[string]interface{}, 0)
+	for _, goal := range dailyData.Goals {
+		switch g := goal.(type) {
+		case primitive.D:
+			goalMap := make(map[string]interface{})
+			for _, elem := range g {
+				// Handle nested BSON documents (like arrays)
+				switch v := elem.Value.(type) {
+				case primitive.A:
+					// Convert BSON array to regular array
+					var array []interface{}
+					for _, item := range v {
+						if subDoc, ok := item.(primitive.D); ok {
+							// Convert sub-document to map
+							subMap := make(map[string]interface{})
+							for _, subElem := range subDoc {
+								subMap[subElem.Key] = subElem.Value
+							}
+							array = append(array, subMap)
+						} else {
+							array = append(array, item)
+						}
+					}
+					goalMap[elem.Key] = array
+				default:
+					goalMap[elem.Key] = elem.Value
+				}
+			}
+			formattedGoals = append(formattedGoals, goalMap)
+		case bson.M:
+			formattedGoals = append(formattedGoals, g)
+		default:
+			fmt.Printf("Unknown goal type: %T\n", goal)
+		}
+	}
+
+	// Create response structure
+	response := map[string]interface{}{
+		"id":     dailyData.ID,
+		"userId": dailyData.UserID,
+		"date":   dailyData.Date,
+		"goals":  formattedGoals,
+	}
+
+	return c.JSON(http.StatusOK, response)
 }
 
 // GetActiveGoals retrieves active goals for a specific date
@@ -179,7 +222,6 @@ func (gc *GoalController) CreateGoal(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid date format"))
 	}
-
 	var request struct {
 		Type string      `json:"type"`
 		Goal interface{} `json:"goal"`
@@ -188,6 +230,58 @@ func (gc *GoalController) CreateGoal(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid request body"))
 	}
 
+	// First, check if a goal of this type already exists for the user on this date
+	filter := bson.M{
+		"userId": userID,
+		"date":   date,
+		"goals": bson.M{
+			"$elemMatch": bson.M{
+				"goalName": request.Goal.(map[string]interface{})["goalName"],
+			},
+		},
+	}
+
+	var dailyData models.DailyDataCollection
+	err = gc.Collection.FindOne(c.Request().Context(), filter).Decode(&dailyData)
+
+	if err == nil {
+		// Goal exists, update it
+		var updateData map[string]interface{}
+		if err := mapstructure.Decode(request.Goal, &updateData); err != nil {
+			return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid goal data"))
+		}
+
+		// Remove fields that shouldn't be updated
+		delete(updateData, "id")
+		delete(updateData, "userId")
+		delete(updateData, "createdAt")
+		updateData["updatedAt"] = time.Now()
+
+		update := bson.M{}
+		for key, value := range updateData {
+			update["goals.$."+key] = value
+		}
+
+		updateResult, err := gc.Collection.UpdateOne(
+			c.Request().Context(),
+			filter,
+			bson.M{"$set": update},
+		)
+
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Failed to update goal"))
+		}
+
+		if updateResult.ModifiedCount == 0 {
+			return c.JSON(http.StatusNotFound, utils.ErrorResponse("Goal not found"))
+		}
+
+		return c.JSON(http.StatusOK, updateData)
+	} else if err != mongo.ErrNoDocuments {
+		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Database error"))
+	}
+
+	// If no existing goal found, create new one
 	goalID := primitive.NewObjectID()
 	switch request.Type {
 	case "exercise":

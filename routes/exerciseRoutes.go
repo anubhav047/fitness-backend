@@ -37,7 +37,7 @@ func RegisterExerciseRoutes(e *echo.Echo, db *mongo.Database) {
 
 	// Goal Management Routes
 	goals := api.Group("/goals")
-	// goals.POST("/:date", goalController.CreateGoal)           // Create
+	goals.POST("/:date", goalController.CreateGoal) // Create
 	goals.GET("/:date/:id", goalController.GetGoal) // Specific GET
 	// goals.PATCH("/:date/:id", goalController.UpdateGoal)      // Specific PATCH
 	// goals.GET("/:date/active", goalController.GetActiveGoals) // Get all active

@@ -57,6 +57,7 @@ type WeightGoal struct {
 	ID           primitive.ObjectID `bson:"_id,omitempty" json:"id"`          // Unique identifier
 	UserID       primitive.ObjectID `bson:"userId" json:"userId"`             // Reference to the user
 	GoalValue    float64            `bson:"goalValue" json:"goalValue"`       // Target weight
+	GoalName     string             `bson:"goalName" json:"goalName"`         // Name of the goal
 	CurrentValue float64            `bson:"currentValue" json:"currentValue"` // Current weight
 	Unit         string             `bson:"unit" json:"unit"`                 // kg or lbs
 	Entries      []WeightEntry      `bson:"entries" json:"entries"`           // History of weight entries
