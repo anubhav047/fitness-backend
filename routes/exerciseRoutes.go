@@ -14,10 +14,13 @@ func RegisterExerciseRoutes(e *echo.Echo, db *mongo.Database) {
 	exerciseGuideController := controllers.NewExerciseGuideController(db)
 	goalController := controllers.NewGoalController(db)
 	progressController := controllers.NewProgressController(db)
+	authController := controllers.NewAuthController(db)
 
 	// Protected API routes
 	api := e.Group("/api")
 	api.Use(middleware.AuthMiddleware)
+
+	api.GET("/getuser", authController.GetUserDetails)
 
 	// Exercise Guide Routes
 	exercise := api.Group("/exercises")
