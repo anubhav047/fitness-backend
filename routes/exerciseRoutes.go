@@ -40,6 +40,7 @@ func RegisterExerciseRoutes(e *echo.Echo, db *mongo.Database) {
 	goals.GET("/:date/active", goalController.GetActiveGoals) // Get all active
 	goals.GET("/:date", goalController.GetAllGoals)           // Get all
 	goals.DELETE("/:date/:id", goalController.DeleteGoal)     // Delete
+	goals.PUT("/:date/:goalName", goalController.UpsertGoalByName)
 
 	// Progress Management Routes
 	progress := api.Group("/progress")
