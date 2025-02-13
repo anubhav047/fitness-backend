@@ -73,8 +73,12 @@ func (pc *ProgressController) GetProgress(c echo.Context) error {
 
 		progressValue, _ := goalMap["progressValue"].(float64)
 		goalValue, _ := goalMap["goalValue"].(float64)
-		totalProgress += progressValue
-		totalGoal += goalValue
+
+		// Only include progress (and goal) if goalValue is greater than 0
+		if goalValue > 0 {
+			totalProgress += progressValue
+			totalGoal += goalValue
+		}
 	}
 
 	return c.JSON(http.StatusOK, bson.M{"totalProgress": totalProgress, "totalGoal": totalGoal})
