@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"fitness-backend/models"
 	"fitness-backend/utils"
 	"fmt"
@@ -16,12 +17,15 @@ import (
 )
 
 type GoalController struct {
-	Collection *mongo.Collection
+	Collection         *mongo.Collection
+	ExerciseCollection *mongo.Collection // Add this line
 }
 
+// Modify NewGoalController
 func NewGoalController(db *mongo.Database) *GoalController {
 	return &GoalController{
-		Collection: db.Collection("daily_data"),
+		Collection:         db.Collection("daily_data"),
+		ExerciseCollection: db.Collection("exercise_guides"), // Add this line
 	}
 }
 func convertToFloat(value interface{}) (float64, bool) {
@@ -475,4 +479,207 @@ func (gc *GoalController) DeleteGoal(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, utils.SuccessResponse("Goal value set to 0"))
+}
+
+func (gc *GoalController) UpsertGoalByName(c echo.Context) error {
+	// Step 1: Validate request context
+	ctx := c.Request().Context()
+	if ctx.Err() != nil {
+		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Request context canceled"))
+	}
+
+	// Step 2: Authorization check
+	userIDString, ok := c.Get("user_id").(string)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, utils.ErrorResponse("Unauthorized"))
+	}
+
+	userID, err := primitive.ObjectIDFromHex(userIDString)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid user ID"))
+	}
+
+	// Step 3: Parse parameters
+	date, err := time.Parse("2006-01-02", c.Param("date"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid date format"))
+	}
+
+	goalName := c.Param("goalName")
+	if goalName == "" {
+		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Goal name is required"))
+	}
+
+	// Step 4: Parse and validate request body
+	var request struct {
+		Type string      `json:"type"`
+		Goal interface{} `json:"goal"`
+	}
+
+	if err := c.Bind(&request); err != nil {
+		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid request format"))
+	}
+
+	if request.Type == "" || request.Goal == nil {
+		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Type and goal are required"))
+	}
+
+	// Step 5: Check if goal exists
+	filter := bson.M{
+		"userId":         userID,
+		"date":           date,
+		"goals.goalName": goalName,
+	}
+
+	var dailyData models.DailyDataCollection
+	err = gc.Collection.FindOne(ctx, filter).Decode(&dailyData)
+
+	// Step 6: Handle create/update logic
+	if err == mongo.ErrNoDocuments {
+		// Create new goal
+		goalID := primitive.NewObjectID()
+		var goal interface{}
+
+		switch request.Type {
+		case "exercise":
+			goal, err = gc.createExerciseGoal(request.Goal, goalID, userID)
+			if err != nil {
+				return c.JSON(http.StatusBadRequest, utils.ErrorResponse(err.Error()))
+			}
+		default:
+			return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Unsupported goal type"))
+		}
+
+		update := bson.M{"$push": bson.M{"goals": goal}}
+		opts := options.Update().SetUpsert(true)
+
+		_, err = gc.Collection.UpdateOne(ctx,
+			bson.M{"userId": userID, "date": date},
+			update,
+			opts)
+
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Failed to create goal"))
+		}
+
+		return c.JSON(http.StatusCreated, goal)
+	}
+
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Database error"))
+	}
+
+	// Step 7: Update existing goal
+	goalMap, err := convertGoalToMap(request.Goal)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid goal data"))
+	}
+
+	goalMap["updatedAt"] = time.Now()
+
+	update := bson.M{}
+	for key, value := range goalMap {
+		update["goals.$."+key] = value
+	}
+
+	updateResult, err := gc.Collection.UpdateOne(
+		ctx,
+		filter,
+		bson.M{"$set": update},
+	)
+
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Failed to update goal"))
+	}
+
+	if updateResult.MatchedCount == 0 {
+		return c.JSON(http.StatusNotFound, utils.ErrorResponse("Goal not found"))
+	}
+
+	return c.JSON(http.StatusOK, goalMap)
+}
+
+// Helper functions
+func (gc *GoalController) createExerciseGoal(goalData interface{}, goalID, userID primitive.ObjectID) (models.ExerciseGoal, error) {
+	var goalMap map[string]interface{}
+	if err := mapstructure.Decode(goalData, &goalMap); err != nil {
+		return models.ExerciseGoal{}, fmt.Errorf("invalid goal data format")
+	}
+
+	// Debug print
+	fmt.Printf("Goal Map: %+v\n", goalMap)
+
+	// Get goal name
+	goalName, ok := goalMap["goalName"].(string)
+	if !ok {
+		return models.ExerciseGoal{}, fmt.Errorf("invalid goalName format")
+	}
+
+	// Get exercise ID from exercise_guides collection based on goal name
+	exerciseID := gc.getExerciseIDByName(context.Background(), goalName)
+
+	// Rest of the validation
+	goalType, ok := goalMap["type"].(string)
+	if !ok {
+		return models.ExerciseGoal{}, fmt.Errorf("invalid type format")
+	}
+
+	goalValue, ok := goalMap["goalValue"].(float64)
+	if !ok {
+		if gv, ok := goalMap["goalValue"].(int); ok {
+			goalValue = float64(gv)
+		} else {
+			return models.ExerciseGoal{}, fmt.Errorf("invalid goalValue format")
+		}
+	}
+
+	progressValue, ok := goalMap["progressValue"].(float64)
+	if !ok {
+		if pv, ok := goalMap["progressValue"].(int); ok {
+			progressValue = float64(pv)
+		} else {
+			return models.ExerciseGoal{}, fmt.Errorf("invalid progressValue format")
+		}
+	}
+
+	comments, ok := goalMap["comments"].(string)
+	if !ok {
+		comments = "" // Default to empty string if not provided
+	}
+
+	isActive, ok := goalMap["isActive"].(bool)
+	if !ok {
+		isActive = true // Default to true if not provided
+	}
+
+	return models.ExerciseGoal{
+		ID:            goalID,
+		UserID:        userID,
+		ExerciseID:    exerciseID, // Use the found or empty exercise ID
+		GoalName:      goalName,
+		Type:          goalType,
+		GoalValue:     goalValue,
+		ProgressValue: progressValue,
+		Comments:      comments,
+		IsActive:      isActive,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}, nil
+}
+
+func convertGoalToMap(goalData interface{}) (map[string]interface{}, error) {
+	var goalMap map[string]interface{}
+	if err := mapstructure.Decode(goalData, &goalMap); err != nil {
+		return nil, fmt.Errorf("invalid goal data format")
+	}
+	return goalMap, nil
+}
+
+func (gc *GoalController) getExerciseIDByName(ctx context.Context, name string) primitive.ObjectID {
+	var exercise models.Exercise
+	err := gc.ExerciseCollection.FindOne(ctx, bson.M{"name": name}).Decode(&exercise)
+	if err != nil {
+		return primitive.NilObjectID
+	}
+	return exercise.ID
 }
