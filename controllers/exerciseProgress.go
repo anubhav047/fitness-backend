@@ -74,9 +74,13 @@ func (pc *ProgressController) GetProgress(c echo.Context) error {
 		progressValue, _ := goalMap["progressValue"].(float64)
 		goalValue, _ := goalMap["goalValue"].(float64)
 
-		// Only include progress (and goal) if goalValue is greater than 0
+		// Only include progress if goalValue is greater than 0
 		if goalValue > 0 {
-			totalProgress += progressValue
+			if progressValue <= goalValue {
+				totalProgress += progressValue
+			} else {
+				totalProgress += goalValue
+			}
 			totalGoal += goalValue
 		}
 	}
