@@ -134,16 +134,11 @@ func (ac *AuthController) SetUserDetails(c echo.Context) error {
 	}
 
 	// Create update document with only non-zero values
-	update := bson.M{"$set": bson.M{}}
-	if updateData.Name != "" {
-		update["$set"].(bson.M)["name"] = updateData.Name
-	}
-	if updateData.Weight != 0 {
-		update["$set"].(bson.M)["weight"] = updateData.Weight
-	}
-	if updateData.Height != 0 {
-		update["$set"].(bson.M)["height"] = updateData.Height
-	}
+	update := bson.M{"$set": bson.M{
+		"name":   updateData.Name,
+		"weight": updateData.Weight,
+		"height": updateData.Height,
+	}}
 
 	// If no fields to update, return error
 	if len(update["$set"].(bson.M)) == 0 {
