@@ -17,6 +17,11 @@ type ProgressController struct {
 	Collection *mongo.Collection
 }
 
+type StreakResponse struct {
+	Streak         []bool `json:"streak"`
+	TargetDayIndex int    `json:"targetDayIndex"`
+}
+
 func NewProgressController(db *mongo.Database) *ProgressController {
 	return &ProgressController{
 		Collection: db.Collection("daily_data"),
@@ -193,4 +198,95 @@ func (pc *ProgressController) DeleteProgress(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, utils.SuccessResponse("Progress set to 0"))
+}
+
+// Update GetWeeklyStreak function
+func (pc *ProgressController) GetWeeklyStreak(c echo.Context) error {
+	userIDString, ok := c.Get("user_id").(string)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, utils.ErrorResponse("Unauthorized"))
+	}
+
+	userID, err := primitive.ObjectIDFromHex(userIDString)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Invalid user ID format"))
+	}
+
+	targetDate, err := time.Parse("2006-01-02", c.Param("date"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid date format"))
+	}
+
+	// Initialize streak array (Monday to Sunday)
+
+	// Calculate start of week
+	daysToSubtract := int(targetDate.Weekday())
+	if daysToSubtract == 0 {
+		daysToSubtract = 6
+	} else {
+		daysToSubtract--
+	}
+	startOfWeek := targetDate.AddDate(0, 0, -daysToSubtract)
+
+	// Get target day index
+	targetDayIndex := int(targetDate.Weekday())
+	if targetDayIndex == 0 {
+		targetDayIndex = 7
+	}
+	targetDayIndex--
+
+	response := StreakResponse{
+		Streak:         make([]bool, 7),
+		TargetDayIndex: targetDayIndex,
+	}
+	// Check each day up to target date
+	for i := 0; i <= targetDayIndex; i++ {
+		currentDate := startOfWeek.AddDate(0, 0, i)
+		currentDate = time.Date(currentDate.Year(), currentDate.Month(), currentDate.Day(), 0, 0, 0, 0, currentDate.Location())
+
+		filter := bson.M{"userId": userID, "date": currentDate}
+		var dailyData models.DailyDataCollection
+		err := pc.Collection.FindOne(c.Request().Context(), filter).Decode(&dailyData)
+
+		if err == nil {
+			var totalProgress, totalGoal float64
+			for _, goal := range dailyData.Goals {
+				var goalMap bson.M
+				switch g := goal.(type) {
+				case primitive.D:
+					bsonBytes, err := bson.Marshal(g)
+					if err != nil {
+						continue
+					}
+					err = bson.Unmarshal(bsonBytes, &goalMap)
+					if err != nil {
+						continue
+					}
+				case bson.M:
+					goalMap = g
+				default:
+					continue
+				}
+
+				progressValue, _ := goalMap["progressValue"].(float64)
+				goalValue, _ := goalMap["goalValue"].(float64)
+
+				if goalValue > 0 {
+					if progressValue <= goalValue {
+						totalProgress += progressValue
+					} else {
+						totalProgress += goalValue
+					}
+					totalGoal += goalValue
+				}
+			}
+
+			// Set array index based on progress
+			if totalProgress >= totalGoal && totalGoal > 0 {
+				response.Streak[i] = true
+			}
+		}
+	}
+
+	return c.JSON(http.StatusOK, response)
 }
