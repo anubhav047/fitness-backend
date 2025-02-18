@@ -21,6 +21,7 @@ func RegisterExerciseRoutes(e *echo.Echo, db *mongo.Database) {
 	api.Use(middleware.AuthMiddleware)
 
 	api.GET("/getuser", authController.GetUserDetails)
+	api.PATCH("/setuser", authController.SetUserDetails) // Update user details
 
 	// Exercise Guide Routes
 	exercise := api.Group("/exercises")
@@ -49,4 +50,6 @@ func RegisterExerciseRoutes(e *echo.Echo, db *mongo.Database) {
 	progress := api.Group("/progress")
 	progress.GET("/:date", progressController.GetProgress)           // Get all progress for a user for a date
 	progress.DELETE("/:date/:id", progressController.DeleteProgress) // Delete progress entry
+
+	progress.GET("/streak/:date", progressController.GetWeeklyStreak)
 }
